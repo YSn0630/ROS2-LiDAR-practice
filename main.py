@@ -3,11 +3,12 @@ import numpy as np
 import time
 import threading
 
-### 분석 영역 설정 ###
+linear_x = 3.0
+angular_z = 1.5
+
 def compute_action(ranges):
     ranges = np.array(ranges)
 
-    # LDS-02 기준 angle_increment = 1도
     front = np.r_[ranges[350:360], ranges[0:10]]
     left  = ranges[80:100]
     right = ranges[260:280]
@@ -17,16 +18,22 @@ def compute_action(ranges):
     right_dist = np.mean(right)
 
     safe_dist = 0.5
+    action = [0.0, 0.0]
 
     if front_dist < safe_dist:
-        action = "turn_left" if left_dist > right_dist else "turn_right"
+        if left_dist > right_dist:
+            am = "turn_left"
+            action[1] = angular_z
+        else:
+            am = "turn_right"
+            action[1] = -angular_z
     else:
-        action = "go_forward"
+        am = "go_forward"
+        action[0] = linear_x
 
-    return front_dist, left_dist, right_dist, action
+    return front_dist, left_dist, right_dist, action, am
 
 
-### rosbridge 연결 + /ls_mock 구독 ###
 class LidarClient:
     def __init__(self, host='localhost', port=9090):
         self.client = roslibpy.Ros(host=host, port=port)
@@ -38,45 +45,49 @@ class LidarClient:
 
         self.scan_topic = roslibpy.Topic(
             self.client,
-            '/ls_mock',
-            'pubscan_pkg_msgs/msg/LaserScanmock'
+            '/scan_mock',
+            'sensor_msgs/msg/LaserScan'
         )
-        self.scan_topic.subscribe(self.on_lidar)
+        self.scan_topic.subscribe(self.on_scan)
 
-        # 2초마다 액션 출력하는 스레드
-        self.print_thread = threading.Thread(target=self.print_loop)
-        self.print_thread.daemon = True
-        self.print_thread.start()
+        self.cmd_topic = roslibpy.Topic(
+            self.client,
+            '/cmd_mock',
+            'geometry_msgs/msg/Twist'
+        )
 
-    def on_lidar(self, message):
-        """ /ls_mock 메시지를 받을 때마다 실행 """
-        self.latest_scan = message["ranges"]
+        self.thread = threading.Thread(target=self.loop)
+        self.thread.daemon = True
+        self.thread.start()
 
-    def print_loop(self):
+    def on_scan(self, msg):
+        self.latest_scan = msg['ranges']
+
+    def loop(self):
         while True:
             if self.latest_scan is not None:
-                f, l, r, act = compute_action(self.latest_scan)
+                f, l, r, act, am = compute_action(self.latest_scan)
+                self.cmd_topic.publish(roslibpy.Message({
+                    'linear': {'x': act[0]},
+                    'angular': {'z': act[1]}
+                }))
 
-                print("front:", round(f, 2))
-                print("left :", round(l, 2))
-                print("right:", round(r, 2))
-                print("action:", act)
+                print("front:", round(f,2))
+                print("left :", round(l,2))
+                print("right:", round(r,2))
+                print("action:", am)
                 print("-------------------------------")
-            time.sleep(2.0)
+            time.sleep(2)
 
     def close(self):
         self.scan_topic.unsubscribe()
         self.client.terminate()
 
 
-### 실행 ###
 if __name__ == "__main__":
-    # Ubuntu ROS2 머신의 IP 입력
-    lidar = LidarClient(host='localhost', port=9090)
-
+    cli = LidarClient('localhost', 9090)
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        lidar.close()
-        print("Closed client.")
+        cli.close()

@@ -2,10 +2,11 @@
 
 import rclpy
 from rclpy.node import Node
-from pubscan_pkg_msgs.msg import LaserScanmock
+from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Twist
+from std_msgs.msg import Header
 import math
 import random
-from std_msgs.msg import Header
 
 ANGLE_MIN_DEG = 0
 ANGLE_MAX_DEG = 359
@@ -14,104 +15,94 @@ NUM_POINTS = 360
 RANGE_MIN = 0.12
 RANGE_MAX = 3.5
 
-class LaserScanmockPublisher(Node):
+class LaserScanPublisher(Node):
     def __init__(self):
-        super().__init__('LSmock_publisher')
+        super().__init__('scan_mock_publisher')
 
-        # Publisher
-        self.publisher = self.create_publisher(LaserScanmock, '/ls_mock', 10)
+        # 구독: Python main.py에서 보낸 Twist
+        self.sub_cmd = self.create_subscription(
+            Twist,
+            '/cmd_mock',
+            self.cmd_callback,
+            10
+        )
 
-        # 2초 주기 타이머
+        # 퍼블리셔들
+        self.pub_scan = self.create_publisher(LaserScan, '/scan_mock', 10)
+        self.pub_tt = self.create_publisher(Twist, '/turtle1/cmd_vel', 10)
+
+        self.latest_linear = 0.0
+        self.latest_angular = 0.0
+
         self.timer = self.create_timer(2.0, self.timer_callback)
 
-        self.get_logger().info("2초마다 랜덤 패턴 LaserScanmock 퍼블리시 시작")
+        self.get_logger().info("표준 LaserScan 사용 시작")
 
-        # 패턴 목록
-        self.AVAILABLE_PATTERNS = ["front_wall", "left_wall", "right_wall"]
+        self.patterns = ["front_path", "left_path", "right_path"]
 
-    # ----------------------- 기본 빈 스캔 생성 -----------------------
     def create_empty_scan(self):
         ranges = [float(RANGE_MAX) for _ in range(NUM_POINTS)]
         intensities = [100.0 for _ in range(NUM_POINTS)]
+        return ranges, intensities
 
-        scan = {
-            "angle_min": math.radians(ANGLE_MIN_DEG),
-            "angle_max": math.radians(ANGLE_MAX_DEG),
-            "angle_increment": math.radians(ANGLE_INCREMENT_DEG),
-            "range_min": RANGE_MIN,
-            "range_max": RANGE_MAX,
-            "ranges": ranges,
-            "intensities": intensities
-        }
-        return scan
-
-    # ----------------------- 벽 생성 로직 -----------------------
-    def make_the_wall(self, ranges, center_deg, width_deg):
-        half_width = width_deg // 2
-        for offset in range(-half_width, half_width + 1):
-            idx = (center_deg + offset) % NUM_POINTS
+    def make_wall(self, ranges, center_deg, width_deg):
+        half = width_deg // 2
+        for i in range(-half, half+1):
+            idx = (center_deg + i) % NUM_POINTS
             ranges[idx] = 0.4
 
-    def pattern_front_wall(self, scan):
-        self.make_the_wall(scan["ranges"], center_deg=0, width_deg=40)
+    def generate_scan(self, pattern):
+        ranges, intensities = self.create_empty_scan()
 
-    def pattern_left_wall(self, scan):
-        self.make_the_wall(scan["ranges"], center_deg=90, width_deg=30)
+        if pattern == "front_path":
+            self.make_wall(ranges, 90, 30)
+            self.make_wall(ranges, 270, 30)
+        elif pattern == "left_path":
+            self.make_wall(ranges, 0, 40)
+            self.make_wall(ranges, 90, 30)
+        elif pattern == "right_path":
+            self.make_wall(ranges, 0, 40)
+            self.make_wall(ranges, 270, 30)
 
-    def pattern_right_wall(self, scan):
-        self.make_the_wall(scan["ranges"], center_deg=270, width_deg=30)
+        return ranges, intensities
 
-    # ----------------------- 단일 스캔 생성 -----------------------
-    def generate_single_scan(self, pattern_name):
-        scan = self.create_empty_scan()
+    def cmd_callback(self, msg: Twist):
+        self.latest_linear = msg.linear.x
+        self.latest_angular = msg.angular.z
+        self.get_logger().info(f"cmd_mock 구독됨: linear={msg.linear.x}, angular={msg.angular.z}")
 
-        if pattern_name == "front_wall":
-            self.pattern_front_wall(scan)
-        elif pattern_name == "left_wall":
-            self.pattern_left_wall(scan)
-        elif pattern_name == "right_wall":
-            self.pattern_right_wall(scan)
-
-        return scan
-
-    # ----------------------- 타이머 콜백 -----------------------
     def timer_callback(self):
+        pattern = random.choice(self.patterns)
+        ranges, intensities = self.generate_scan(pattern)
 
-        # 랜덤 패턴 선택
-        pattern = random.choice(self.AVAILABLE_PATTERNS)
-
-        scan_dict = self.generate_single_scan(pattern)
-
-        # LaserScanmock 메시지 구성
-        msg = LaserScanmock()
-
+        msg = LaserScan()
         msg.header = Header()
         msg.header.stamp = self.get_clock().now().to_msg()
-        msg.header.frame_id = "lidar_link"
+        msg.header.frame_id = "lidar"
 
-        msg.angle_min = float(scan_dict["angle_min"])
-        msg.angle_max = float(scan_dict["angle_max"])
-        msg.angle_increment = float(scan_dict["angle_increment"])
-        msg.time_increment = 0.0
-        msg.scan_time = 0.1
+        msg.angle_min = math.radians(ANGLE_MIN_DEG)
+        msg.angle_max = math.radians(ANGLE_MAX_DEG)
+        msg.angle_increment = math.radians(ANGLE_INCREMENT_DEG)
         msg.range_min = RANGE_MIN
         msg.range_max = RANGE_MAX
-        msg.ranges = scan_dict["ranges"]
-        msg.intensities = scan_dict["intensities"]
+        msg.ranges = ranges
+        msg.intensities = intensities
 
-        # publish
-        self.publisher.publish(msg)
+        self.pub_scan.publish(msg)
+        self.get_logger().info(f"LaserScan pattern [{pattern}] 발행")
 
-        self.get_logger().info(f"패턴 [{pattern}] 퍼블리시 완료")
-
+        # 터틀봇 제어도 같이 발행
+        tmsg = Twist()
+        tmsg.linear.x = self.latest_linear
+        tmsg.angular.z = self.latest_angular
+        self.pub_tt.publish(tmsg)
 
 def main(args=None):
     rclpy.init(args=args)
-    node = LaserScanmockPublisher()
+    node = LaserScanPublisher()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
 
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
