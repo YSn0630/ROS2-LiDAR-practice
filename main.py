@@ -5,8 +5,8 @@ import threading
 import pymysql
 import json
 
-linear_x = 3.0
-angular_z = 1.5
+linear_x = 2.0
+angular_z = np.radians(90)
 
 config = dict(
     host = 'localhost',
@@ -52,9 +52,9 @@ class DB:
 def compute_action(ranges):
     ranges = np.array(ranges)
 
-    front = np.r_[ranges[350:360], ranges[0:10]]
-    left  = ranges[80:100]
-    right = ranges[260:280]
+    front = np.r_[ranges[340:359], ranges[0:20]]
+    left  = ranges[70:110]
+    right = ranges[250:290]
 
     front_dist = np.mean(front)
     left_dist  = np.mean(left)
@@ -64,12 +64,19 @@ def compute_action(ranges):
     action = [0.0, 0.0]
 
     if front_dist < safe_dist:
-        if left_dist > right_dist:
-            am = "turn_left"
-            action[1] = angular_z
-        else:
+        if left_dist > safe_dist:
+            if left_dist > right_dist:
+                am = "turn_left"
+                action[1] = angular_z
+            else:
+                am = "turn_right"
+                action[1] = -angular_z
+        elif right_dist > safe_dist:
             am = "turn_right"
             action[1] = -angular_z
+        else:
+            am = "turn_around"
+            action[1] = 2 * angular_z
     else:
         am = "go_forward"
         action[0] = linear_x

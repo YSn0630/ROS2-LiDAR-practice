@@ -38,7 +38,7 @@ class LaserScanPublisher(Node):
 
         self.get_logger().info("표준 LaserScan 사용 시작")
 
-        self.patterns = ["front_path", "left_path", "right_path"]
+        self.patterns = ["front_path", "left_path", "right_path", "back_path"]
 
     def create_empty_scan(self):
         ranges = [float(RANGE_MAX) for _ in range(NUM_POINTS)]
@@ -49,20 +49,24 @@ class LaserScanPublisher(Node):
         half = width_deg // 2
         for i in range(-half, half+1):
             idx = (center_deg + i) % NUM_POINTS
-            ranges[idx] = 0.4
+            ranges[idx] = 0.25
 
     def generate_scan(self, pattern):
         ranges, intensities = self.create_empty_scan()
 
         if pattern == "front_path":
-            self.make_wall(ranges, 90, 30)
-            self.make_wall(ranges, 270, 30)
+            self.make_wall(ranges, 90, 40)
+            self.make_wall(ranges, 270, 40)
         elif pattern == "left_path":
             self.make_wall(ranges, 0, 40)
-            self.make_wall(ranges, 90, 30)
+            self.make_wall(ranges, 90, 40)
         elif pattern == "right_path":
             self.make_wall(ranges, 0, 40)
-            self.make_wall(ranges, 270, 30)
+            self.make_wall(ranges, 270, 40)
+        elif pattern == "back_path":
+            self.make_wall(ranges, 0, 40)
+            self.make_wall(ranges, 90, 40)
+            self.make_wall(ranges, 270, 40)
 
         return ranges, intensities
 
