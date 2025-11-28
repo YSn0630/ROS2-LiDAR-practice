@@ -2,9 +2,52 @@ import roslibpy
 import numpy as np
 import time
 import threading
+import pymysql
+import json
 
 linear_x = 3.0
 angular_z = 1.5
+
+config = dict(
+    host = 'localhost',
+    user = 'root',
+    password = '000630',
+    database = 'scanmockdb',
+    charset = 'utf8'
+)
+
+class DB:
+    def __init__(self, **config):
+        self.config = config
+
+    def connect(self):
+        return pymysql.connect(**self.config)
+
+    def DBcreateTable(self):
+        sql1 = "USE scanmockdb;"
+        sql2 = "CREATE TABLE IF NOT EXISTS scanmocktb ( \
+        id INT PRIMARY KEY AUTO_INCREMENT, \
+        ranges json, \
+        ts DATETIME, \
+        act VARCHAR(50) \
+        );"
+        with self.connect() as con:
+            with con.cursor() as cur:
+                cur.execute(sql1)
+                cur.execute(sql2)
+
+    def insert_data(self, ranges, act):
+        sql = "INSERT INTO scanmocktb (ranges, ts, act) VALUES (%s, now(), %s)"
+        with self.connect() as con:
+            try:
+                with con.cursor() as cur:
+                    cur.execute(sql, (ranges, act))
+                con.commit()
+                return True
+            except Exception:
+                con.rollback()
+                return False
+
 
 def compute_action(ranges):
     ranges = np.array(ranges)
@@ -41,19 +84,24 @@ class LidarClient:
 
         print("Connecting to rosbridge...")
         self.client.run()
-        print("Connected!")
+        print("Connected!\n")
+
+        print("Connecting to database...")
+        self.db = DB(**config)
+        self.db.DBcreateTable()
+        print("Connected!\n")
 
         self.scan_topic = roslibpy.Topic(
             self.client,
             '/scan_mock',
-            'sensor_msgs/msg/LaserScan'
+            'sensor_msgs/LaserScan'
         )
         self.scan_topic.subscribe(self.on_scan)
 
         self.cmd_topic = roslibpy.Topic(
             self.client,
             '/cmd_mock',
-            'geometry_msgs/msg/Twist'
+            'geometry_msgs/Twist'
         )
 
         self.thread = threading.Thread(target=self.loop)
@@ -71,12 +119,12 @@ class LidarClient:
                     'linear': {'x': act[0]},
                     'angular': {'z': act[1]}
                 }))
-
                 print("front:", round(f,2))
                 print("left :", round(l,2))
                 print("right:", round(r,2))
                 print("action:", am)
                 print("-------------------------------")
+                self.db.insert_data(json.dumps(self.latest_scan), am)
             time.sleep(2)
 
     def close(self):
